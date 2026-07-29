@@ -78,6 +78,13 @@ data class StreamInfo(
     val videoStreams: List<MediaStream>,
     val audioStreams: List<MediaStream>,
     val subtitles: List<SubtitleTrack>,
+    /** InnerTube client that produced the stream URLs. */
+    val clientName: String = "",
+    /**
+     * googlevideo ties stream URLs to the requesting client: fetching them with
+     * a different User-Agent is a common cause of HTTP 403.
+     */
+    val clientUserAgent: String = "",
 ) {
     /** Video streams grouped so that each height appears once, best variant first. */
     fun videoOptions(preferWebm: Boolean): List<MediaStream> {

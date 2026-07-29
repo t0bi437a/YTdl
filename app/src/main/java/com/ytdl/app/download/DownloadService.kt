@@ -12,6 +12,7 @@ import android.util.Log
 import androidx.core.app.ServiceCompat
 import com.ytdl.app.R
 import com.ytdl.app.settings.SettingsRepository
+import com.ytdl.app.youtube.StreamKind
 import com.ytdl.app.youtube.YoutubeRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -239,13 +240,7 @@ class DownloadService : Service() {
             var audioDone = 0L
 
             if (needsVideo) {
-                videoDone = fetchTrack(
-                    task = task,
-                    url = task.videoUrl!!,
-                    itag = task.videoItag,
-                    target = videoFile,
-                    expected = task.videoBytes,
-                ) { done ->
+                videoDone = fetchTrack(id, isVideoTrack = true, target = videoFile) { done ->
                     videoDone = done
                     publishProgress(id, videoDone + audioDone, total)
                 }
@@ -253,13 +248,7 @@ class DownloadService : Service() {
 
             if (needsAudio) {
                 task = DownloadStore.get(id) ?: return
-                audioDone = fetchTrack(
-                    task = task,
-                    url = task.audioUrl!!,
-                    itag = task.audioItag,
-                    target = audioFile,
-                    expected = task.audioBytes,
-                ) { done ->
+                audioDone = fetchTrack(id, isVideoTrack = false, target = audioFile) { done ->
                     audioDone = done
                     publishProgress(id, videoDone + audioDone, total)
                 }
@@ -331,26 +320,76 @@ class DownloadService : Service() {
         }
     }
 
-    /** Downloads one track, re-resolving the URL once if it has expired. */
+    /**
+     * Downloads one track. A 403/404/410 means the signed URL is dead — expired,
+     * or the serving client got blocked — so the stream is re-resolved through
+     * every other InnerTube client (with a probe) before giving up.
+     */
     private suspend fun fetchTrack(
-        task: DownloadTask,
-        url: String,
-        itag: Int,
+        taskId: String,
+        isVideoTrack: Boolean,
         target: File,
-        expected: Long,
         onProgress: suspend (Long) -> Unit,
     ): Long {
-        return try {
-            Downloader.fetch(url, target, expected) { done, _ -> onProgress(done) }
-        } catch (e: Downloader.HttpStatusException) {
-            // 403/410 means the signed URL timed out; ask YouTube for a fresh one.
-            if (e.code != 403 && e.code != 410) throw e
-            val fresh = YoutubeRepository.refreshUrl(task.videoId, itag)
-                ?: throw e
-            DownloadStore.update(task.id) {
-                if (itag == it.videoItag) it.copy(videoUrl = fresh) else it.copy(audioUrl = fresh)
+        var recoveries = 0
+        while (true) {
+            val task = DownloadStore.get(taskId) ?: throw IllegalStateException("Task removed")
+            val url = (if (isVideoTrack) task.videoUrl else task.audioUrl)
+                ?: throw IllegalStateException("Missing stream URL")
+            val expected = if (isVideoTrack) task.videoBytes else task.audioBytes
+
+            try {
+                return Downloader.fetch(url, target, expected, task.userAgent) { done, _ ->
+                    onProgress(done)
+                }
+            } catch (e: Downloader.HttpStatusException) {
+                if (e.code !in intArrayOf(403, 404, 410) || recoveries >= 2) throw e
+                recoveries++
+
+                val itag = if (isVideoTrack) task.videoItag else task.audioItag
+                val kind = when {
+                    !isVideoTrack -> StreamKind.AUDIO_ONLY
+                    task.alreadyMuxed -> StreamKind.MUXED
+                    else -> StreamKind.VIDEO_ONLY
+                }
+                // "1080p60" -> 1080; "128 kbps" -> 128000. Only used when the
+                // original itag has disappeared and a substitute must be found.
+                val labelNumber = task.qualityLabel.takeWhile { it.isDigit() }.toIntOrNull() ?: 0
+                val recovered = YoutubeRepository.recoverStream(
+                    videoId = task.videoId,
+                    itag = itag,
+                    kind = kind,
+                    targetHeight = if (isVideoTrack) labelNumber else 0,
+                    targetBitrate = if (isVideoTrack) 0L else labelNumber * 1000L,
+                ) ?: throw e
+
+                // A different itag is a different encoding: partial data from
+                // the old stream cannot be reused.
+                if (recovered.stream.itag != itag) target.delete()
+
+                DownloadStore.update(taskId) { t ->
+                    val s = recovered.stream
+                    if (isVideoTrack) {
+                        t.copy(
+                            videoUrl = s.url,
+                            videoItag = s.itag,
+                            videoContainer = s.container,
+                            videoCodec = s.codec,
+                            videoBytes = if (s.contentLength > 0) s.contentLength else t.videoBytes,
+                            userAgent = recovered.userAgent,
+                        )
+                    } else {
+                        t.copy(
+                            audioUrl = s.url,
+                            audioItag = s.itag,
+                            audioContainer = s.container,
+                            audioCodec = s.codec,
+                            audioBytes = if (s.contentLength > 0) s.contentLength else t.audioBytes,
+                            userAgent = recovered.userAgent,
+                        )
+                    }
+                }
             }
-            Downloader.fetch(fresh, target, expected) { done, _ -> onProgress(done) }
         }
     }
 

@@ -67,6 +67,8 @@ object DownloadPlanner {
             videoCodec = videoStream?.codec.orEmpty(),
             videoBytes = videoStream?.contentLength ?: 0L,
 
+            userAgent = info.clientUserAgent,
+
             audioUrl = audio?.url,
             audioItag = audio?.itag ?: -1,
             audioContainer = audio?.container ?: "mp4",

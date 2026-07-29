@@ -8,90 +8,127 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import kotlin.coroutines.coroutineContext
 
-/** Plain ranged HTTP fetcher with resume and progress reporting. */
+/** Ranged HTTP fetcher tuned for googlevideo, with resume and progress. */
 object Downloader {
 
     private const val BUFFER = 128 * 1024
-    private val USER_AGENT = InnerTube.PLAYER_CLIENTS.first().userAgent
+
+    /**
+     * googlevideo throttles — and often rejects with 403 — single requests for
+     * a whole media file. Official clients ask for bounded pieces through the
+     * `range` query parameter, so we do the same.
+     */
+    private const val CHUNK = 6L * 1024 * 1024
+
+    private val FALLBACK_UA = InnerTube.PLAYER_CLIENTS.first().userAgent
 
     class HttpStatusException(val code: Int) : IOException("HTTP $code")
 
     /**
-     * Appends to [target] using a Range request when it already has content.
+     * Appends to [target] from where it left off.
      *
-     * @param onProgress called with (bytesOnDisk, totalBytes) as data arrives.
+     * @param userAgent must be the UA of the InnerTube client that produced
+     *   [url]; a mismatch is answered with 403.
      * @return total bytes on disk when finished.
      */
     suspend fun fetch(
         url: String,
         target: File,
         expectedSize: Long = 0,
+        userAgent: String = "",
         onProgress: suspend (downloaded: Long, total: Long) -> Unit = { _, _ -> },
     ): Long = withContext(Dispatchers.IO) {
         target.parentFile?.mkdirs()
+        val ua = userAgent.ifEmpty { FALLBACK_UA }
 
-        var existing = if (target.exists()) target.length() else 0L
-        if (expectedSize > 0 && existing >= expectedSize) {
-            onProgress(existing, expectedSize)
-            return@withContext existing
+        var written = if (target.exists()) target.length() else 0L
+        if (expectedSize > 0 && written >= expectedSize) {
+            onProgress(written, expectedSize)
+            return@withContext written
         }
 
+        if (expectedSize > 0) {
+            // Known size: pull bounded pieces via the range query parameter.
+            var lastReported = written
+            while (written < expectedSize) {
+                coroutineContext.ensureActive()
+                val end = minOf(written + CHUNK, expectedSize) - 1
+                val pieceUrl = url + (if ('?' in url) "&" else "?") + "range=$written-$end"
+                val got = readInto(pieceUrl, ua, rangeHeader = null, target, append = written > 0) {
+                    if (written + it - lastReported >= 512 * 1024) {
+                        lastReported = written + it
+                        onProgress(written + it, expectedSize)
+                    }
+                }
+                if (got <= 0) throw IOException("Empty chunk at $written")
+                written += got
+            }
+            onProgress(written, expectedSize)
+            written
+        } else {
+            // Unknown size (subtitles, thumbnails, odd streams): one request,
+            // resumed with a Range header when partial data already exists.
+            val header = if (written > 0) "bytes=$written-" else null
+            var lastReported = written
+            val got = readInto(url, ua, header, target, append = written > 0) {
+                if (written + it - lastReported >= 512 * 1024) {
+                    lastReported = written + it
+                    onProgress(written + it, 0)
+                }
+            }
+            written += got
+            onProgress(written, written)
+            written
+        }
+    }
+
+    /** Streams one response body into [target]; returns bytes read. */
+    private suspend fun readInto(
+        url: String,
+        userAgent: String,
+        rangeHeader: String?,
+        target: File,
+        append: Boolean,
+        onDelta: suspend (Long) -> Unit,
+    ): Long {
         val builder = Request.Builder()
             .url(url)
-            .header("User-Agent", USER_AGENT)
+            .header("User-Agent", userAgent)
             .header("Accept", "*/*")
             .header("Accept-Language", "en-US,en;q=0.9")
-        if (existing > 0) builder.header("Range", "bytes=$existing-")
+        if (rangeHeader != null) builder.header("Range", rangeHeader)
 
         Http.client.newCall(builder.build()).execute().use { response ->
             if (!response.isSuccessful) throw HttpStatusException(response.code)
-
-            // A server that ignores our Range restarts the file from zero.
-            if (existing > 0 && response.code != 206) existing = 0
-
             val body = response.body ?: throw IOException("Empty response body")
-            val remaining = body.contentLength()
-            val total = when {
-                expectedSize > 0 -> expectedSize
-                remaining > 0 -> existing + remaining
-                else -> 0L
-            }
 
-            val append = existing > 0
-            var written = existing
-            var lastReported = 0L
-
+            var read = 0L
             body.byteStream().use { input ->
-                java.io.FileOutputStream(target, append).use { output ->
+                FileOutputStream(target, append).use { output ->
                     val buffer = ByteArray(BUFFER)
                     while (true) {
                         coroutineContext.ensureActive()
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        output.write(buffer, 0, read)
-                        written += read
-                        // Throttle UI/state churn to roughly every 512 KB.
-                        if (written - lastReported >= 512 * 1024) {
-                            lastReported = written
-                            onProgress(written, total)
-                        }
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        output.write(buffer, 0, n)
+                        read += n
+                        onDelta(read)
                     }
                     output.flush()
                 }
             }
-
-            onProgress(written, if (total > 0) total else written)
-            return@withContext written
+            return read
         }
     }
 
     /** Small one-shot fetch used for subtitles and thumbnails. */
     suspend fun fetchBytes(url: String): ByteArray? = withContext(Dispatchers.IO) {
         try {
-            val request = Request.Builder().url(url).header("User-Agent", USER_AGENT).build()
+            val request = Request.Builder().url(url).header("User-Agent", FALLBACK_UA).build()
             Http.client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) null else response.body?.bytes()
             }

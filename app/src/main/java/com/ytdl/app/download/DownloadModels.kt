@@ -28,6 +28,9 @@ data class DownloadTask(
     val audioCodec: String = "",
     val audioBytes: Long = 0,
 
+    /** User-Agent of the InnerTube client that issued the stream URLs. */
+    val userAgent: String = "",
+
     /** True when the video track already contains audio and no muxing is needed. */
     val alreadyMuxed: Boolean = false,
     val audioOnly: Boolean = false,

@@ -126,13 +126,70 @@ object YoutubeRepository {
 
             val info = parseStreamInfo(videoId, response)
             if (info != null && (info.videoStreams.isNotEmpty() || info.audioStreams.isNotEmpty())) {
-                return@withContext info
+                return@withContext info.copy(
+                    clientName = client.name,
+                    clientUserAgent = client.userAgent,
+                )
             }
             lastError = lastError ?: "no streams from ${client.name}"
         }
 
         throw ExtractionException(lastError ?: "Could not resolve streams", lastCause)
     }
+
+    data class RecoveredStream(val stream: MediaStream, val userAgent: String)
+
+    /**
+     * Called when a stream URL answers 403/410: signed googlevideo URLs expire
+     * after a few hours and are also rejected when the serving client falls out
+     * of favor. Walks every client, prefers the exact same itag, verifies the
+     * candidate URL actually answers before handing it back.
+     */
+    suspend fun recoverStream(
+        videoId: String,
+        itag: Int,
+        kind: StreamKind,
+        targetHeight: Int,
+        targetBitrate: Long,
+    ): RecoveredStream? = withContext(Dispatchers.IO) {
+        for (client in InnerTube.PLAYER_CLIENTS) {
+            val response = try {
+                InnerTube.player(videoId, client)
+            } catch (e: IOException) {
+                continue
+            }
+            if (response.optJSONObject("playabilityStatus")
+                    ?.optString("status", "OK") != "OK"
+            ) continue
+
+            val info = parseStreamInfo(videoId, response) ?: continue
+            val all = info.videoStreams + info.audioStreams
+
+            val candidate = all.firstOrNull { it.itag == itag }
+                ?: all.filter { it.kind == kind }
+                    .minWithOrNull(
+                        compareBy(
+                            { kotlin.math.abs(it.height - targetHeight) },
+                            { kotlin.math.abs(it.bitrate - targetBitrate) },
+                        )
+                    )
+                ?: continue
+
+            if (probeUrl(candidate.url, client.userAgent)) {
+                return@withContext RecoveredStream(candidate, client.userAgent)
+            }
+        }
+        null
+    }
+
+    /** Cheap single-byte request that tells us whether a stream URL is alive. */
+    private fun probeUrl(url: String, userAgent: String): Boolean = runCatching {
+        val probe = url + (if ('?' in url) "&" else "?") + "range=0-0"
+        val request = Request.Builder().url(probe)
+            .header("User-Agent", userAgent)
+            .build()
+        Http.client.newCall(request).execute().use { it.isSuccessful }
+    }.getOrDefault(false)
 
     private fun parseStreamInfo(videoId: String, response: JSONObject): StreamInfo? {
         val streaming = response.optJSONObject("streamingData") ?: return null
@@ -235,25 +292,4 @@ object YoutubeRepository {
         return out
     }
 
-    /**
-     * Stream URLs expire after a few hours. When a paused/queued download is
-     * resumed we re-resolve the same itag instead of failing.
-     */
-    suspend fun refreshUrl(videoId: String, itag: Int): String? = runCatching {
-        getStreams(videoId).let { info ->
-            (info.videoStreams + info.audioStreams).firstOrNull { it.itag == itag }?.url
-        }
-    }.getOrNull()
-
-    /** HEAD request used when InnerTube omits `contentLength`. */
-    suspend fun probeSize(url: String): Long = withContext(Dispatchers.IO) {
-        runCatching {
-            val request = Request.Builder().url(url).head()
-                .header("User-Agent", InnerTube.PLAYER_CLIENTS.first().userAgent)
-                .build()
-            Http.client.newCall(request).execute().use { r ->
-                r.header("Content-Length")?.toLongOrNull() ?: 0L
-            }
-        }.getOrDefault(0L)
-    }
 }

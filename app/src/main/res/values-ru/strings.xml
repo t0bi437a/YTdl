@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="share_target_label">Скачать через YTdl</string>
+
+    <string name="tab_search">Поиск</string>
+    <string name="tab_downloads">Загрузки</string>
+    <string name="tab_settings">Настройки</string>
+
+    <string name="search_hint">Ссылка, название или автор</string>
+    <string name="search_action">Найти</string>
+    <string name="paste">Вставить</string>
+    <string name="clear">Очистить</string>
+    <string name="filter_videos">Видео</string>
+    <string name="filter_channels">Каналы</string>
+    <string name="load_more">Показать ещё</string>
+    <string name="empty_search">Введите ссылку на YouTube, название видео или имя канала</string>
+    <string name="no_results">Ничего не найдено</string>
+    <string name="retry">Повторить</string>
+
+    <string name="download">Скачать</string>
+    <string name="cancel">Отмена</string>
+    <string name="pause">Пауза</string>
+    <string name="resume">Продолжить</string>
+    <string name="remove">Удалить</string>
+    <string name="open">Открыть</string>
+    <string name="share">Поделиться</string>
+    <string name="ok">ОК</string>
+
+    <string name="choose_quality">Выберите качество</string>
+    <string name="video">Видео</string>
+    <string name="audio_only">Только звук</string>
+    <string name="best_available">Лучшее доступное</string>
+    <string name="download_started">Загрузка начата</string>
+    <string name="queued">В очереди</string>
+    <string name="downloading">Скачивание</string>
+    <string name="merging">Объединение видео и звука</string>
+    <string name="saving">Сохранение</string>
+    <string name="completed">Готово</string>
+    <string name="failed">Ошибка</string>
+    <string name="paused">Пауза</string>
+    <string name="canceled">Отменено</string>
+
+    <string name="downloads_empty">Пока нет загрузок</string>
+    <string name="clear_finished">Очистить завершённые</string>
+    <string name="queue">Очередь</string>
+    <string name="finished">Завершённые</string>
+    <string name="move_up">Выше</string>
+    <string name="move_down">Ниже</string>
+    <string name="pause_all">Остановить все</string>
+    <string name="resume_all">Продолжить все</string>
+    <string name="queue_position">№%1$d в очереди</string>
+
+    <string name="select">Выбрать</string>
+    <string name="select_all">Выбрать все</string>
+    <string name="selected_n">Выбрано: %1$d</string>
+    <string name="download_selected">Скачать %1$d</string>
+    <string name="quality_for_all">Качество для всех выбранных</string>
+    <string name="batch_progress">Добавление в очередь: %1$d из %2$d</string>
+    <string name="batch_done">Добавлено: %1$d, ошибок: %2$d</string>
+    <string name="added_to_queue">Добавлено в очередь</string>
+
+    <string name="settings_downloads">Скачивание</string>
+    <string name="settings_default_quality">Качество видео по умолчанию</string>
+    <string name="settings_ask_every_time">Всегда спрашивать</string>
+    <string name="settings_default_audio_quality">Качество звука по умолчанию</string>
+    <string name="settings_prefer_container">Предпочитаемый формат</string>
+    <string name="settings_wifi_only">Только по Wi-Fi</string>
+    <string name="settings_wifi_only_sum">Не скачивать через мобильный интернет</string>
+    <string name="settings_parallel">Одновременных загрузок</string>
+    <string name="settings_storage">Хранилище</string>
+    <string name="settings_folder">Папка загрузок</string>
+    <string name="settings_folder_default">По умолчанию (Movies/YTdl и Music/YTdl)</string>
+    <string name="settings_choose_folder">Выбрать папку…</string>
+    <string name="settings_reset_folder">Вернуть папку по умолчанию</string>
+    <string name="settings_filename">Шаблон имени файла</string>
+    <string name="settings_filename_sum">Доступно: %title%, %author%, %quality%, %id%, %date%</string>
+    <string name="settings_extras">Дополнительно</string>
+    <string name="settings_subtitles">Скачивать субтитры</string>
+    <string name="settings_subtitles_sum">Сохраняет файл .vtt рядом с видео</string>
+    <string name="settings_thumbnail">Сохранять обложку</string>
+    <string name="settings_sharing">Меню «Поделиться»</string>
+    <string name="settings_share_auto">Мгновенная загрузка из «Поделиться»</string>
+    <string name="settings_share_auto_sum">Не спрашивать качество, использовать настройки по умолчанию</string>
+    <string name="settings_appearance">Внешний вид</string>
+    <string name="settings_theme">Тема</string>
+    <string name="settings_theme_system">Как в системе</string>
+    <string name="settings_theme_light">Светлая</string>
+    <string name="settings_theme_dark">Тёмная</string>
+    <string name="settings_dynamic_color">Динамические цвета</string>
+    <string name="settings_about">О программе</string>
+
+    <string name="notif_channel_progress">Ход загрузки</string>
+    <string name="notif_channel_done">Завершённые загрузки</string>
+    <string name="notif_downloading_n">Скачивается файлов: %1$d</string>
+
+    <string name="err_no_link">Ссылка на YouTube не найдена</string>
+    <string name="err_network">Ошибка сети. Проверьте подключение.</string>
+    <string name="err_unavailable">Видео недоступно: %1$s</string>
+    <string name="err_no_streams">Не найдено потоков для скачивания</string>
+    <string name="err_wifi_only">Ожидание Wi-Fi</string>
+</resources>

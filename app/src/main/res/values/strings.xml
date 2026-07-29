@@ -74,7 +74,7 @@
     <string name="settings_choose_folder">Choose folder…</string>
     <string name="settings_reset_folder">Use default folder</string>
     <string name="settings_filename">File name template</string>
-    <string name="settings_filename_sum">Available: %title%, %author%, %quality%, %id%, %date%</string>
+    <string name="settings_filename_sum" formatted="false">Available: %title%, %author%, %quality%, %id%, %date%</string>
     <string name="settings_extras">Extras</string>
     <string name="settings_subtitles">Download subtitles</string>
     <string name="settings_subtitles_sum">Saves a .vtt file next to the video</string>

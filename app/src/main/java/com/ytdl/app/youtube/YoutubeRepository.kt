@@ -221,7 +221,8 @@ object YoutubeRepository {
         val out = ArrayList<SubtitleTrack>()
         for (i in 0 until list.length()) {
             val t = list.optJSONObject(i) ?: continue
-            val base = t.optString("baseUrl", "").ifEmpty { continue }
+            val base = t.optString("baseUrl", "")
+            if (base.isEmpty()) continue
             out.add(
                 SubtitleTrack(
                     languageCode = t.optString("languageCode", "und"),

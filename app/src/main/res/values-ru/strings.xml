@@ -73,7 +73,7 @@
     <string name="settings_choose_folder">Выбрать папку…</string>
     <string name="settings_reset_folder">Вернуть папку по умолчанию</string>
     <string name="settings_filename">Шаблон имени файла</string>
-    <string name="settings_filename_sum">Доступно: %title%, %author%, %quality%, %id%, %date%</string>
+    <string name="settings_filename_sum" formatted="false">Доступно: %title%, %author%, %quality%, %id%, %date%</string>
     <string name="settings_extras">Дополнительно</string>
     <string name="settings_subtitles">Скачивать субтитры</string>
     <string name="settings_subtitles_sum">Сохраняет файл .vtt рядом с видео</string>

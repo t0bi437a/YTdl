@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -20,6 +21,7 @@ import java.io.File
 object DownloadStore {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private val listSerializer = ListSerializer(DownloadTask.serializer())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val writeLock = Mutex()
 
@@ -36,7 +38,7 @@ object DownloadStore {
         file = f
         scope.launch {
             val restored = runCatching {
-                if (f.exists()) json.decodeFromString<List<DownloadTask>>(f.readText())
+                if (f.exists()) json.decodeFromString(listSerializer, f.readText())
                 else emptyList()
             }.getOrDefault(emptyList())
 
@@ -134,7 +136,7 @@ object DownloadStore {
         val target = file ?: return
         scope.launch {
             writeLock.withLock {
-                runCatching { target.writeText(json.encodeToString(snapshot)) }
+                runCatching { target.writeText(json.encodeToString(listSerializer, snapshot)) }
             }
         }
     }

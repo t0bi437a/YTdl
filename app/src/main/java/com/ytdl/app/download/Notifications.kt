@@ -88,7 +88,7 @@ object Notifications {
             } else statusText
         )
 
-        val indeterminate = running.totalBytes <= 0 ||
+        val indeterminate = running.progress <= 0f ||
             running.status == DownloadStatus.MERGING || running.status == DownloadStatus.SAVING
         if (indeterminate) {
             builder.setProgress(0, 0, true)

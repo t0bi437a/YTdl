@@ -16,6 +16,12 @@ android {
         versionCode = 1
         versionName = "1.0"
         vectorDrawables { useSupportLibrary = true }
+
+        // yt-dlp ships Python + ffmpeg native binaries per ABI; limit to the two
+        // that cover virtually all phones so the APK stays installable.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     signingConfigs {
@@ -58,6 +64,16 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // youtubedl-android's modules each bundle these.
+            pickFirsts += listOf(
+                "**/libpython*.so",
+                "**/libffmpeg*.so",
+            )
+        }
+        // The bundled Python/ffmpeg binaries must be extracted on install so
+        // they can be executed at runtime.
+        jniLibs {
+            useLegacyPackaging = true
         }
     }
 }
@@ -77,6 +93,8 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.documentfile)
     implementation(libs.okhttp)
+    implementation(libs.youtubedl.android)
+    implementation(libs.youtubedl.ffmpeg)
     implementation(libs.coil.compose)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)

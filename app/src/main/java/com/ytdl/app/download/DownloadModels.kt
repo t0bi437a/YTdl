@@ -6,6 +6,11 @@ enum class DownloadStatus {
     QUEUED, RUNNING, MERGING, SAVING, COMPLETED, FAILED, PAUSED, CANCELED, WAITING_WIFI
 }
 
+/**
+ * A download handed to yt-dlp. Instead of concrete stream URLs it carries a
+ * yt-dlp format selector; yt-dlp re-resolves and downloads at run time, so a
+ * task stays valid even after signed URLs would have expired.
+ */
 @Serializable
 data class DownloadTask(
     val id: String,
@@ -15,48 +20,33 @@ data class DownloadTask(
     val thumbnailUrl: String = "",
     val durationSeconds: Long = 0,
 
-    /** Direct stream URL for the video (or muxed) track; null for audio-only jobs. */
-    val videoUrl: String? = null,
-    val videoItag: Int = -1,
-    val videoContainer: String = "mp4",
-    val videoCodec: String = "",
-    val videoBytes: Long = 0,
-
-    val audioUrl: String? = null,
-    val audioItag: Int = -1,
-    val audioContainer: String = "mp4",
-    val audioCodec: String = "",
-    val audioBytes: Long = 0,
-
-    /** User-Agent of the client that issued the stream URLs. */
-    val userAgent: String = "",
-
-    /** True when URLs are proxied (Piped): use a Range header, not chunk params. */
-    val proxied: Boolean = false,
-
-    /** True when the video track already contains audio and no muxing is needed. */
-    val alreadyMuxed: Boolean = false,
+    /** The watch URL yt-dlp is pointed at. */
+    val sourceUrl: String,
+    /** yt-dlp `-f` expression, e.g. "bestvideo[height<=1080]+bestaudio/best". */
+    val formatSelector: String,
+    /** Container to merge into / extract to: mp4, webm, m4a, opus. */
+    val mergeFormat: String = "mp4",
     val audioOnly: Boolean = false,
 
     val qualityLabel: String = "",
     val fileName: String = "download",
     val fileExtension: String = "mp4",
 
-    val subtitleUrl: String? = null,
-    val subtitleLanguage: String = "",
+    val downloadSubtitles: Boolean = false,
     val saveThumbnail: Boolean = false,
 
     val status: DownloadStatus = DownloadStatus.QUEUED,
+    /** 0f..1f. yt-dlp reports a percentage rather than exact byte counts. */
+    val percent: Float = 0f,
     val downloadedBytes: Long = 0,
     val totalBytes: Long = 0,
     val error: String? = null,
     val resultUri: String? = null,
     val createdAt: Long = 0,
-    /** Position in the queue; lower runs first. Changed by the reorder buttons. */
+    /** Position in the queue; lower runs first. */
     val queueOrder: Long = 0,
 ) {
-    val progress: Float
-        get() = if (totalBytes > 0) (downloadedBytes.toFloat() / totalBytes).coerceIn(0f, 1f) else 0f
+    val progress: Float get() = percent.coerceIn(0f, 1f)
 
     val isActive: Boolean
         get() = status == DownloadStatus.QUEUED || status == DownloadStatus.RUNNING ||

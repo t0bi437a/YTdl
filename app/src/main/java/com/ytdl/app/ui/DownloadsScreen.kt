@@ -196,7 +196,7 @@ private fun TaskRow(
                 overflow = TextOverflow.Ellipsis,
             )
 
-            if (task.status == DownloadStatus.RUNNING && task.totalBytes > 0) {
+            if (task.status == DownloadStatus.RUNNING && task.progress > 0f) {
                 Spacer(Modifier.size(6.dp))
                 LinearProgressIndicator(
                     progress = { task.progress },
@@ -204,7 +204,7 @@ private fun TaskRow(
                 )
             } else if (task.status == DownloadStatus.MERGING ||
                 task.status == DownloadStatus.SAVING ||
-                (task.status == DownloadStatus.RUNNING && task.totalBytes <= 0)
+                task.status == DownloadStatus.RUNNING
             ) {
                 Spacer(Modifier.size(6.dp))
                 LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -267,12 +267,8 @@ private fun statusLine(task: DownloadTask, queuePosition: Int, context: Context)
             ).joinToString(" · ")
 
         DownloadStatus.RUNNING -> {
-            val size = if (task.totalBytes > 0) {
-                "${Format.bytes(task.downloadedBytes)} / ${Format.bytes(task.totalBytes)}"
-            } else {
-                Format.bytes(task.downloadedBytes)
-            }
-            listOfNotNull(context.getString(R.string.downloading), size, quality)
+            val pct = "${(task.progress * 100).toInt()}%"
+            listOfNotNull(context.getString(R.string.downloading), pct, quality)
                 .joinToString(" · ")
         }
 

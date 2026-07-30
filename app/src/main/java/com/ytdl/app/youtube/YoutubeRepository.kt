@@ -2,7 +2,6 @@ package com.ytdl.app.youtube
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.Request
 import org.json.JSONObject
 import java.io.IOException
 
@@ -149,93 +148,6 @@ object YoutubeRepository {
 
         throw ExtractionException(lastError ?: "Could not resolve streams", lastCause)
     }
-
-    data class RecoveredStream(
-        val stream: MediaStream,
-        val userAgent: String,
-        val proxied: Boolean,
-    )
-
-    /**
-     * Called when a stream URL dies (403/410, or cut off mid-download). Fetches
-     * a completely fresh set of streams and returns a live URL for the same
-     * track. Piped is preferred (a new proxied URL needs no probe); otherwise
-     * the InnerTube clients are walked and each candidate is probed first.
-     */
-    suspend fun recoverStream(
-        videoId: String,
-        itag: Int,
-        kind: StreamKind,
-        targetHeight: Int,
-        targetBitrate: Long,
-        /**
-         * Set when the same itag keeps dying mid-download: forces a different
-         * encoding of comparable quality instead of retrying a poisoned one.
-         */
-        excludeItag: Int? = null,
-    ): RecoveredStream? = withContext(Dispatchers.IO) {
-        // A fresh proxied URL (Piped/Invidious) needs no probe — it was just issued.
-        for (info in listOfNotNull(
-            runCatching { Piped.streams(videoId) }.getOrNull(),
-            runCatching { Invidious.streams(videoId) }.getOrNull(),
-        )) {
-            val all = info.videoStreams + info.audioStreams
-            pickCandidate(all, kind, itag, excludeItag, targetHeight, targetBitrate)?.let {
-                return@withContext RecoveredStream(it, info.clientUserAgent, proxied = true)
-            }
-        }
-
-        for (client in InnerTube.PLAYER_CLIENTS) {
-            val response = try {
-                InnerTube.player(videoId, client)
-            } catch (e: IOException) {
-                continue
-            }
-            if (response.optJSONObject("playabilityStatus")
-                    ?.optString("status", "OK") != "OK"
-            ) continue
-
-            val info = parseStreamInfo(videoId, response) ?: continue
-            val all = info.videoStreams + info.audioStreams
-            val candidate = pickCandidate(all, kind, itag, excludeItag, targetHeight, targetBitrate)
-                ?: continue
-
-            if (probeUrl(candidate.url, client.userAgent)) {
-                return@withContext RecoveredStream(candidate, client.userAgent, proxied = false)
-            }
-        }
-        null
-    }
-
-    private fun pickCandidate(
-        all: List<MediaStream>,
-        kind: StreamKind,
-        itag: Int,
-        excludeItag: Int?,
-        targetHeight: Int,
-        targetBitrate: Long,
-    ): MediaStream? {
-        if (excludeItag == null) {
-            all.firstOrNull { it.itag == itag && it.url.isNotEmpty() }?.let { return it }
-        }
-        return all
-            .filter { it.kind == kind && it.url.isNotEmpty() && it.itag != (excludeItag ?: -1) }
-            .minWithOrNull(
-                compareBy(
-                    { kotlin.math.abs(it.height - targetHeight) },
-                    { kotlin.math.abs(it.bitrate - targetBitrate) },
-                )
-            )
-    }
-
-    /** Cheap single-byte request that tells us whether a stream URL is alive. */
-    private fun probeUrl(url: String, userAgent: String): Boolean = runCatching {
-        val probe = url + (if ('?' in url) "&" else "?") + "range=0-0"
-        val request = Request.Builder().url(probe)
-            .header("User-Agent", userAgent)
-            .build()
-        Http.client.newCall(request).execute().use { it.isSuccessful }
-    }.getOrDefault(false)
 
     private fun parseStreamInfo(videoId: String, response: JSONObject): StreamInfo? {
         val streaming = response.optJSONObject("streamingData") ?: return null

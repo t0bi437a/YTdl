@@ -18,7 +18,6 @@ import com.ytdl.app.ui.MainViewModel
 import com.ytdl.app.ui.QualitySheet
 import com.ytdl.app.ui.theme.YTdlTheme
 import com.ytdl.app.youtube.UrlUtils
-import com.ytdl.app.youtube.YoutubeRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -66,22 +65,22 @@ class ShareActivity : ComponentActivity() {
 
     private suspend fun downloadWithDefaults(videoId: String) {
         val settings = SettingsRepository(applicationContext).flow.first()
-        try {
-            val info = YoutubeRepository.getStreams(videoId)
-            val audioOnly = settings.audioOnlyByDefault
-            val video = if (audioOnly) null else DownloadPlanner.autoSelectVideo(info, settings)
-            val audio = DownloadPlanner.autoSelectAudio(info, settings)
-
-            if (!audioOnly && video == null) {
-                Toast.makeText(this, R.string.err_no_streams, Toast.LENGTH_LONG).show()
-            } else {
-                val task = DownloadPlanner.build(info, video, audio, settings)
-                DownloadService.enqueue(this, task)
-                Toast.makeText(this, R.string.added_to_queue, Toast.LENGTH_SHORT).show()
-            }
-        } catch (e: Throwable) {
-            Toast.makeText(this, e.message ?: getString(R.string.failed), Toast.LENGTH_LONG).show()
-        }
+        // No resolving needed — yt-dlp picks formats at download time, so the
+        // task is built straight from the id and the default quality.
+        val task = DownloadPlanner.build(
+            meta = DownloadPlanner.VideoMeta(
+                id = videoId,
+                title = videoId,
+                author = "",
+                thumbnailUrl = UrlUtils.thumbnailUrl(videoId),
+                durationSeconds = 0,
+            ),
+            height = DownloadPlanner.defaultHeight(settings),
+            audioOnly = settings.audioOnlyByDefault,
+            settings = settings,
+        )
+        DownloadService.enqueue(this, task)
+        Toast.makeText(this, R.string.added_to_queue, Toast.LENGTH_SHORT).show()
         finish()
     }
 

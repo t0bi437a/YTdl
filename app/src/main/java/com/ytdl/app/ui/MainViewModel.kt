@@ -14,6 +14,7 @@ import com.ytdl.app.youtube.ChannelItem
 import com.ytdl.app.youtube.ExtractionException
 import com.ytdl.app.youtube.MediaStream
 import com.ytdl.app.youtube.StreamInfo
+import com.ytdl.app.youtube.StreamKind
 import com.ytdl.app.youtube.UrlUtils
 import com.ytdl.app.youtube.VideoItem
 import com.ytdl.app.youtube.YoutubeRepository
@@ -88,7 +89,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val batch: StateFlow<BatchState?> = _batch.asStateFlow()
 
     private var searchJob: Job? = null
-    private var batchJob: Job? = null
 
     fun settingsRepository(): SettingsRepository = settingsRepo
 
@@ -230,12 +230,38 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
             } catch (e: Throwable) {
+                // Metadata sources can all be down; the picker still works with a
+                // generic quality list because yt-dlp resolves formats at download
+                // time from the height alone.
                 val current = _picker.value
                 if (current?.videoId == videoId) {
-                    _picker.value = current.copy(loading = false, error = describe(e))
+                    _picker.value = current.copy(loading = false, info = genericStreams(videoId))
                 }
             }
         }
+    }
+
+    private fun genericStreams(videoId: String): StreamInfo {
+        val heights = listOf(2160, 1440, 1080, 720, 480, 360, 240, 144)
+        val video = heights.map { h ->
+            MediaStream(
+                itag = -1, url = "", mimeType = "", container = "mp4", codec = "",
+                kind = StreamKind.VIDEO_ONLY, qualityLabel = "${h}p", height = h,
+                fps = 0, bitrate = 0, audioSampleRate = 0, contentLength = 0,
+            )
+        }
+        val audio = listOf(
+            MediaStream(
+                itag = -1, url = "", mimeType = "", container = "mp4", codec = "",
+                kind = StreamKind.AUDIO_ONLY, qualityLabel = "Audio", height = 0,
+                fps = 0, bitrate = 0, audioSampleRate = 0, contentLength = 0,
+            )
+        )
+        return StreamInfo(
+            id = videoId, title = "", author = "", channelId = null, durationSeconds = 0,
+            thumbnailUrl = UrlUtils.thumbnailUrl(videoId), viewCount = 0,
+            videoStreams = video, audioStreams = audio, subtitles = emptyList(),
+        )
     }
 
     fun closePicker() {
@@ -268,50 +294,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Resolves every selected video and appends it to the queue. Streams are
-     * resolved one at a time so a 20-video batch does not hammer InnerTube.
+     * Queues every selected video at one quality. No per-video resolving is
+     * needed — yt-dlp does that at download time — so the whole batch is enqueued
+     * instantly from the search metadata.
      *
-     * @param height target video height, or [Quality.BEST]; ignored when [audioOnly].
+     * @param height target video height, or 0 for best; ignored when [audioOnly].
      */
     fun downloadSelected(height: Int, audioOnly: Boolean) {
-        val ids = _search.value.videos.filter { it.id in _selection.value }
-        if (ids.isEmpty()) return
+        val videos = _search.value.videos.filter { it.id in _selection.value }
+        if (videos.isEmpty()) return
 
-        batchJob?.cancel()
         _selection.value = emptySet()
-        _batch.value = BatchState(total = ids.size)
-
-        batchJob = viewModelScope.launch {
+        viewModelScope.launch {
             val config = settingsRepo.flow.first()
-            val effective = config.copy(defaultHeight = height)
-            var done = 0
-            var failed = 0
-            val built = ArrayList<com.ytdl.app.download.DownloadTask>(ids.size)
-
-            for (video in ids) {
-                try {
-                    val info = YoutubeRepository.getStreams(video.id)
-                    val videoStream =
-                        if (audioOnly) null else DownloadPlanner.autoSelectVideo(info, effective)
-                    val audioStream = DownloadPlanner.autoSelectAudio(info, effective)
-                    if (!audioOnly && videoStream == null) {
-                        failed++
-                    } else {
-                        built += DownloadPlanner.build(info, videoStream, audioStream, effective)
-                        done++
-                    }
-                } catch (e: Throwable) {
-                    failed++
-                }
-                _batch.value = BatchState(ids.size, done, failed, running = true)
+            val built = videos.map { video ->
+                DownloadPlanner.build(
+                    meta = DownloadPlanner.VideoMeta(
+                        id = video.id,
+                        title = video.title,
+                        author = video.author,
+                        thumbnailUrl = video.thumbnailUrl,
+                        durationSeconds = video.durationSeconds,
+                    ),
+                    height = height,
+                    audioOnly = audioOnly,
+                    settings = config,
+                )
             }
-
-            if (built.isNotEmpty()) {
-                DownloadStore.addAll(built)
-                DownloadService.sync(getApplication())
-            }
-            _batch.value = BatchState(ids.size, done, failed, running = false)
-            _messages.value = getApplication<Application>().getString(R.string.download_started)
+            DownloadStore.addAll(built)
+            DownloadService.sync(getApplication())
+            _batch.value = BatchState(built.size, built.size, 0, running = false)
+            _messages.value = getApplication<Application>().getString(R.string.added_to_queue)
         }
     }
 

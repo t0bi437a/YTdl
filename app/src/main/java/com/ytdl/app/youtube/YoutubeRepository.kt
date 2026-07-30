@@ -151,6 +151,11 @@ object YoutubeRepository {
         kind: StreamKind,
         targetHeight: Int,
         targetBitrate: Long,
+        /**
+         * Set when the same itag keeps dying mid-download: forces a different
+         * encoding of comparable quality instead of retrying a poisoned one.
+         */
+        excludeItag: Int? = null,
     ): RecoveredStream? = withContext(Dispatchers.IO) {
         for (client in InnerTube.PLAYER_CLIENTS) {
             val response = try {
@@ -165,8 +170,9 @@ object YoutubeRepository {
             val info = parseStreamInfo(videoId, response) ?: continue
             val all = info.videoStreams + info.audioStreams
 
-            val candidate = all.firstOrNull { it.itag == itag }
-                ?: all.filter { it.kind == kind }
+            val exact = if (excludeItag == null) all.firstOrNull { it.itag == itag } else null
+            val candidate = exact
+                ?: all.filter { it.kind == kind && it.itag != (excludeItag ?: -1) }
                     .minWithOrNull(
                         compareBy(
                             { kotlin.math.abs(it.height - targetHeight) },

@@ -28,6 +28,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.io.IOException
 
 /**
  * Foreground service that owns the download queue. Each task runs as its own
@@ -322,8 +323,14 @@ class DownloadService : Service() {
 
     /**
      * Downloads one track. A 403/404/410 means the signed URL is dead — expired,
-     * or the serving client got blocked — so the stream is re-resolved through
-     * every other InnerTube client (with a probe) before giving up.
+     * blocked, or cut off mid-stream by YouTube's anti-abuse layer, which is
+     * routine on large files. Each time the stream is re-resolved through the
+     * InnerTube clients and the download resumes from where it stopped.
+     *
+     * The failure counter resets whenever a recovery actually advanced the
+     * file, so a 700 MB download surviving many cut-offs still completes; only
+     * repeated failures with zero progress abort. After a couple of dead ends
+     * on the same itag the recovery is asked for a different encoding.
      */
     private suspend fun fetchTrack(
         taskId: String,
@@ -331,7 +338,8 @@ class DownloadService : Service() {
         target: File,
         onProgress: suspend (Long) -> Unit,
     ): Long {
-        var recoveries = 0
+        var stalledFailures = 0
+        var bytesAtLastFailure = -1L
         while (true) {
             val task = DownloadStore.get(taskId) ?: throw IllegalStateException("Task removed")
             val url = (if (isVideoTrack) task.videoUrl else task.audioUrl)
@@ -342,9 +350,21 @@ class DownloadService : Service() {
                 return Downloader.fetch(url, target, expected, task.userAgent) { done, _ ->
                     onProgress(done)
                 }
-            } catch (e: Downloader.HttpStatusException) {
-                if (e.code !in intArrayOf(403, 404, 410) || recoveries >= 2) throw e
-                recoveries++
+            } catch (e: IOException) {
+                val recoverable = (e is Downloader.HttpStatusException &&
+                    e.code in intArrayOf(403, 404, 410)) ||
+                    e is Downloader.StreamDiedException
+                if (!recoverable) throw e
+
+                val onDisk = if (target.exists()) target.length() else 0L
+                if (onDisk > bytesAtLastFailure) stalledFailures = 0
+                bytesAtLastFailure = onDisk
+                stalledFailures++
+                if (stalledFailures > 4) throw e
+
+                // Give the CDN a moment; instant retries tend to hit the same
+                // anti-abuse verdict.
+                delay(2000L * stalledFailures)
 
                 val itag = if (isVideoTrack) task.videoItag else task.audioItag
                 val kind = when {
@@ -352,8 +372,8 @@ class DownloadService : Service() {
                     task.alreadyMuxed -> StreamKind.MUXED
                     else -> StreamKind.VIDEO_ONLY
                 }
-                // "1080p60" -> 1080; "128 kbps" -> 128000. Only used when the
-                // original itag has disappeared and a substitute must be found.
+                // "1080p60" -> 1080; "128 kbps" -> 128000. Only used when a
+                // substitute stream must be found.
                 val labelNumber = task.qualityLabel.takeWhile { it.isDigit() }.toIntOrNull() ?: 0
                 val recovered = YoutubeRepository.recoverStream(
                     videoId = task.videoId,
@@ -361,6 +381,7 @@ class DownloadService : Service() {
                     kind = kind,
                     targetHeight = if (isVideoTrack) labelNumber else 0,
                     targetBitrate = if (isVideoTrack) 0L else labelNumber * 1000L,
+                    excludeItag = if (stalledFailures >= 3) itag else null,
                 ) ?: throw e
 
                 // A different itag is a different encoding: partial data from

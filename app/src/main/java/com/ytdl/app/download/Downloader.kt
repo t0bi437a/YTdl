@@ -28,6 +28,9 @@ object Downloader {
 
     class HttpStatusException(val code: Int) : IOException("HTTP $code")
 
+    /** A 2xx response with no data: the URL is dead even though it didn't 403. */
+    class StreamDiedException : IOException("Stream ended prematurely")
+
     /**
      * Appends to [target] from where it left off.
      *
@@ -64,7 +67,7 @@ object Downloader {
                         onProgress(written + it, expectedSize)
                     }
                 }
-                if (got <= 0) throw IOException("Empty chunk at $written")
+                if (got <= 0) throw StreamDiedException()
                 written += got
             }
             onProgress(written, expectedSize)

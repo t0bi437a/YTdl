@@ -267,7 +267,8 @@ object Piped {
         val out = ArrayList<SubtitleTrack>()
         for (i in 0 until arr.length()) {
             val t = arr.optJSONObject(i) ?: continue
-            val url = t.optString("url", "").ifEmpty { continue }
+            val url = t.optString("url", "")
+            if (url.isEmpty()) continue
             out.add(
                 SubtitleTrack(
                     languageCode = t.optString("code", "und"),

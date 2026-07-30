@@ -13,7 +13,8 @@ serialization = "1.7.3"
 coroutines = "1.9.0"
 documentfile = "1.0.1"
 media3 = "1.5.1"
-youtubedl = "0.17.4"
+# JitPack: resolve to the newest published 0.x of youtubedl-android.
+youtubedl = "0.+"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }

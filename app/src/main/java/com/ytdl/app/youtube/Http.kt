@@ -21,4 +21,17 @@ object Http {
             .protocols(listOf(Protocol.HTTP_1_1))
             .build()
     }
+
+    /**
+     * Short-timeout client for metadata APIs (Piped/Invidious/InnerTube). Public
+     * instances are often dead, so a hung request must fail fast to let the next
+     * instance or source take over — never the 60 s of the download client.
+     */
+    val apiClient: OkHttpClient by lazy {
+        client.newBuilder()
+            .connectTimeout(7, TimeUnit.SECONDS)
+            .readTimeout(12, TimeUnit.SECONDS)
+            .callTimeout(15, TimeUnit.SECONDS)
+            .build()
+    }
 }

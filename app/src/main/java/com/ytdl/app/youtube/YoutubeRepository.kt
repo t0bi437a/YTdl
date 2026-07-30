@@ -11,32 +11,33 @@ object YoutubeRepository {
 
     // ---------------------------------------------------------------- search
 
+    private fun SearchPage?.hasResults(): Boolean =
+        this != null && (videos.isNotEmpty() || channels.isNotEmpty())
+
     suspend fun searchVideos(query: String): SearchPage = withContext(Dispatchers.IO) {
-        runCatching { Piped.searchVideos(query) }.getOrNull()
-            ?.takeIf { it.videos.isNotEmpty() || it.channels.isNotEmpty() }
+        runCatching { Piped.searchVideos(query) }.getOrNull()?.takeIf { it.hasResults() }
+            ?: runCatching { Invidious.searchVideos(query) }.getOrNull()?.takeIf { it.hasResults() }
             ?: parsePage(InnerTube.search(query, InnerTube.Filters.VIDEOS))
     }
 
     suspend fun searchChannels(query: String): SearchPage = withContext(Dispatchers.IO) {
-        runCatching { Piped.searchChannels(query) }.getOrNull()
-            ?.takeIf { it.videos.isNotEmpty() || it.channels.isNotEmpty() }
+        runCatching { Piped.searchChannels(query) }.getOrNull()?.takeIf { it.hasResults() }
+            ?: runCatching { Invidious.searchChannels(query) }.getOrNull()?.takeIf { it.hasResults() }
             ?: parsePage(InnerTube.search(query, InnerTube.Filters.CHANNELS))
     }
 
     suspend fun continueSearch(token: String): SearchPage = withContext(Dispatchers.IO) {
-        if (token.startsWith("PIPED:")) Piped.continuePage(token)
-        else parsePage(InnerTube.searchContinuation(token.removePrefix("ITUBE:")))
+        parsePage(InnerTube.searchContinuation(token.removePrefix("ITUBE:")))
     }
 
     suspend fun channelVideos(channelId: String): SearchPage = withContext(Dispatchers.IO) {
-        runCatching { Piped.channel(channelId) }.getOrNull()
-            ?.takeIf { it.videos.isNotEmpty() }
+        runCatching { Piped.channel(channelId) }.getOrNull()?.takeIf { it.hasResults() }
+            ?: runCatching { Invidious.channel(channelId) }.getOrNull()?.takeIf { it.hasResults() }
             ?: parsePage(InnerTube.browse(channelId, InnerTube.Filters.CHANNEL_VIDEOS))
     }
 
     suspend fun continueBrowse(token: String): SearchPage = withContext(Dispatchers.IO) {
-        if (token.startsWith("PIPED:")) Piped.continuePage(token)
-        else parsePage(InnerTube.browseContinuation(token.removePrefix("ITUBE:")))
+        parsePage(InnerTube.browseContinuation(token.removePrefix("ITUBE:")))
     }
 
     private fun parsePage(root: JSONObject): SearchPage {
@@ -109,9 +110,8 @@ object YoutubeRepository {
      * clients are the fallback when every Piped instance is unreachable.
      */
     suspend fun getStreams(videoId: String): StreamInfo = withContext(Dispatchers.IO) {
-        runCatching { Piped.streams(videoId) }.getOrNull()
-            ?.takeIf { it.videoStreams.isNotEmpty() || it.audioStreams.isNotEmpty() }
-            ?.let { return@withContext it }
+        runCatching { Piped.streams(videoId) }.getOrNull()?.let { return@withContext it }
+        runCatching { Invidious.streams(videoId) }.getOrNull()?.let { return@withContext it }
         getStreamsInnerTube(videoId)
     }
 
@@ -174,7 +174,11 @@ object YoutubeRepository {
          */
         excludeItag: Int? = null,
     ): RecoveredStream? = withContext(Dispatchers.IO) {
-        runCatching { Piped.streams(videoId) }.getOrNull()?.let { info ->
+        // A fresh proxied URL (Piped/Invidious) needs no probe — it was just issued.
+        for (info in listOfNotNull(
+            runCatching { Piped.streams(videoId) }.getOrNull(),
+            runCatching { Invidious.streams(videoId) }.getOrNull(),
+        )) {
             val all = info.videoStreams + info.audioStreams
             pickCandidate(all, kind, itag, excludeItag, targetHeight, targetBitrate)?.let {
                 return@withContext RecoveredStream(it, info.clientUserAgent, proxied = true)

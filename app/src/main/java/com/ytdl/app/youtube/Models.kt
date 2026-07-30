@@ -85,6 +85,11 @@ data class StreamInfo(
      * a different User-Agent is a common cause of HTTP 403.
      */
     val clientUserAgent: String = "",
+    /**
+     * True when the URLs go through a proxy (Piped) rather than straight to
+     * googlevideo, so they take a plain Range header and never 403 mid-file.
+     */
+    val proxied: Boolean = false,
 ) {
     /** Video streams grouped so that each height appears once, best variant first. */
     fun videoOptions(preferWebm: Boolean): List<MediaStream> {

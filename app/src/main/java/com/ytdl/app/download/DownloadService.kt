@@ -347,17 +347,22 @@ class DownloadService : Service() {
             val expected = if (isVideoTrack) task.videoBytes else task.audioBytes
 
             try {
-                return Downloader.fetch(url, target, expected, task.userAgent) { done, _ ->
+                return Downloader.fetch(url, target, expected, task.userAgent, task.proxied) { done, _ ->
                     onProgress(done)
                 }
             } catch (e: IOException) {
+                val onDisk = if (target.exists()) target.length() else 0L
+                val progressed = onDisk > bytesAtLastFailure
+
+                // A dead URL (403/404/410 or a truncated stream) is always worth
+                // re-resolving; a plain connection drop only while it advances.
                 val recoverable = (e is Downloader.HttpStatusException &&
                     e.code in intArrayOf(403, 404, 410)) ||
-                    e is Downloader.StreamDiedException
+                    e is Downloader.StreamDiedException ||
+                    progressed
                 if (!recoverable) throw e
 
-                val onDisk = if (target.exists()) target.length() else 0L
-                if (onDisk > bytesAtLastFailure) stalledFailures = 0
+                if (progressed) stalledFailures = 0
                 bytesAtLastFailure = onDisk
                 stalledFailures++
                 if (stalledFailures > 4) throw e
@@ -398,6 +403,7 @@ class DownloadService : Service() {
                             videoCodec = s.codec,
                             videoBytes = if (s.contentLength > 0) s.contentLength else t.videoBytes,
                             userAgent = recovered.userAgent,
+                            proxied = recovered.proxied,
                         )
                     } else {
                         t.copy(
@@ -407,6 +413,7 @@ class DownloadService : Service() {
                             audioCodec = s.codec,
                             audioBytes = if (s.contentLength > 0) s.contentLength else t.audioBytes,
                             userAgent = recovered.userAgent,
+                            proxied = recovered.proxied,
                         )
                     }
                 }

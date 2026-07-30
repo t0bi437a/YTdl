@@ -11,27 +11,32 @@ object YoutubeRepository {
 
     // ---------------------------------------------------------------- search
 
-    suspend fun searchVideos(query: String): SearchPage =
-        search(query, InnerTube.Filters.VIDEOS)
+    suspend fun searchVideos(query: String): SearchPage = withContext(Dispatchers.IO) {
+        runCatching { Piped.searchVideos(query) }.getOrNull()
+            ?.takeIf { it.videos.isNotEmpty() || it.channels.isNotEmpty() }
+            ?: parsePage(InnerTube.search(query, InnerTube.Filters.VIDEOS))
+    }
 
-    suspend fun searchChannels(query: String): SearchPage =
-        search(query, InnerTube.Filters.CHANNELS)
-
-    private suspend fun search(query: String, params: String): SearchPage =
-        withContext(Dispatchers.IO) {
-            parsePage(InnerTube.search(query, params))
-        }
+    suspend fun searchChannels(query: String): SearchPage = withContext(Dispatchers.IO) {
+        runCatching { Piped.searchChannels(query) }.getOrNull()
+            ?.takeIf { it.videos.isNotEmpty() || it.channels.isNotEmpty() }
+            ?: parsePage(InnerTube.search(query, InnerTube.Filters.CHANNELS))
+    }
 
     suspend fun continueSearch(token: String): SearchPage = withContext(Dispatchers.IO) {
-        parsePage(InnerTube.searchContinuation(token))
+        if (token.startsWith("PIPED:")) Piped.continuePage(token)
+        else parsePage(InnerTube.searchContinuation(token.removePrefix("ITUBE:")))
     }
 
     suspend fun channelVideos(channelId: String): SearchPage = withContext(Dispatchers.IO) {
-        parsePage(InnerTube.browse(channelId, InnerTube.Filters.CHANNEL_VIDEOS))
+        runCatching { Piped.channel(channelId) }.getOrNull()
+            ?.takeIf { it.videos.isNotEmpty() }
+            ?: parsePage(InnerTube.browse(channelId, InnerTube.Filters.CHANNEL_VIDEOS))
     }
 
     suspend fun continueBrowse(token: String): SearchPage = withContext(Dispatchers.IO) {
-        parsePage(InnerTube.browseContinuation(token))
+        if (token.startsWith("PIPED:")) Piped.continuePage(token)
+        else parsePage(InnerTube.browseContinuation(token.removePrefix("ITUBE:")))
     }
 
     private fun parsePage(root: JSONObject): SearchPage {
@@ -46,7 +51,7 @@ object YoutubeRepository {
         return SearchPage(
             videos = videos.distinctBy { it.id },
             channels = channels.distinctBy { it.id },
-            continuation = continuation,
+            continuation = continuation?.let { "ITUBE:$it" },
         )
     }
 
@@ -99,10 +104,18 @@ object YoutubeRepository {
     // ---------------------------------------------------------------- streams
 
     /**
-     * Resolves playable streams, trying each client in turn. The first client
-     * that yields at least one stream with a usable URL wins.
+     * Resolves playable streams. Piped (proxied, token-handled server-side) is
+     * tried first because its URLs survive large downloads; the direct InnerTube
+     * clients are the fallback when every Piped instance is unreachable.
      */
     suspend fun getStreams(videoId: String): StreamInfo = withContext(Dispatchers.IO) {
+        runCatching { Piped.streams(videoId) }.getOrNull()
+            ?.takeIf { it.videoStreams.isNotEmpty() || it.audioStreams.isNotEmpty() }
+            ?.let { return@withContext it }
+        getStreamsInnerTube(videoId)
+    }
+
+    private suspend fun getStreamsInnerTube(videoId: String): StreamInfo = withContext(Dispatchers.IO) {
         var lastError: String? = null
         var lastCause: Throwable? = null
 
@@ -137,13 +150,17 @@ object YoutubeRepository {
         throw ExtractionException(lastError ?: "Could not resolve streams", lastCause)
     }
 
-    data class RecoveredStream(val stream: MediaStream, val userAgent: String)
+    data class RecoveredStream(
+        val stream: MediaStream,
+        val userAgent: String,
+        val proxied: Boolean,
+    )
 
     /**
-     * Called when a stream URL answers 403/410: signed googlevideo URLs expire
-     * after a few hours and are also rejected when the serving client falls out
-     * of favor. Walks every client, prefers the exact same itag, verifies the
-     * candidate URL actually answers before handing it back.
+     * Called when a stream URL dies (403/410, or cut off mid-download). Fetches
+     * a completely fresh set of streams and returns a live URL for the same
+     * track. Piped is preferred (a new proxied URL needs no probe); otherwise
+     * the InnerTube clients are walked and each candidate is probed first.
      */
     suspend fun recoverStream(
         videoId: String,
@@ -157,6 +174,13 @@ object YoutubeRepository {
          */
         excludeItag: Int? = null,
     ): RecoveredStream? = withContext(Dispatchers.IO) {
+        runCatching { Piped.streams(videoId) }.getOrNull()?.let { info ->
+            val all = info.videoStreams + info.audioStreams
+            pickCandidate(all, kind, itag, excludeItag, targetHeight, targetBitrate)?.let {
+                return@withContext RecoveredStream(it, info.clientUserAgent, proxied = true)
+            }
+        }
+
         for (client in InnerTube.PLAYER_CLIENTS) {
             val response = try {
                 InnerTube.player(videoId, client)
@@ -169,23 +193,35 @@ object YoutubeRepository {
 
             val info = parseStreamInfo(videoId, response) ?: continue
             val all = info.videoStreams + info.audioStreams
-
-            val exact = if (excludeItag == null) all.firstOrNull { it.itag == itag } else null
-            val candidate = exact
-                ?: all.filter { it.kind == kind && it.itag != (excludeItag ?: -1) }
-                    .minWithOrNull(
-                        compareBy(
-                            { kotlin.math.abs(it.height - targetHeight) },
-                            { kotlin.math.abs(it.bitrate - targetBitrate) },
-                        )
-                    )
+            val candidate = pickCandidate(all, kind, itag, excludeItag, targetHeight, targetBitrate)
                 ?: continue
 
             if (probeUrl(candidate.url, client.userAgent)) {
-                return@withContext RecoveredStream(candidate, client.userAgent)
+                return@withContext RecoveredStream(candidate, client.userAgent, proxied = false)
             }
         }
         null
+    }
+
+    private fun pickCandidate(
+        all: List<MediaStream>,
+        kind: StreamKind,
+        itag: Int,
+        excludeItag: Int?,
+        targetHeight: Int,
+        targetBitrate: Long,
+    ): MediaStream? {
+        if (excludeItag == null) {
+            all.firstOrNull { it.itag == itag && it.url.isNotEmpty() }?.let { return it }
+        }
+        return all
+            .filter { it.kind == kind && it.url.isNotEmpty() && it.itag != (excludeItag ?: -1) }
+            .minWithOrNull(
+                compareBy(
+                    { kotlin.math.abs(it.height - targetHeight) },
+                    { kotlin.math.abs(it.bitrate - targetBitrate) },
+                )
+            )
     }
 
     /** Cheap single-byte request that tells us whether a stream URL is alive. */

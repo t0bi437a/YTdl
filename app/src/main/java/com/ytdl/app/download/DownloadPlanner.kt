@@ -68,6 +68,7 @@ object DownloadPlanner {
             videoBytes = videoStream?.contentLength ?: 0L,
 
             userAgent = info.clientUserAgent,
+            proxied = info.proxied,
 
             audioUrl = audio?.url,
             audioItag = audio?.itag ?: -1,
